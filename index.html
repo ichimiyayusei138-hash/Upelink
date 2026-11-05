@@ -510,10 +510,10 @@ const held = new Map();      // midi -> 押されている数
 const open = new Map();      // midi -> 終わっていないロールノート
 const struck = new Map();    // midi -> 打鍵時刻（フラッシュ用）
 let rollNotes = [];
-function visOn(midi, vel = 0.8, t = nowS()) {
+function visOn(midi, vel = 0.8, t = nowS(), top = false) {
   held.set(midi, (held.get(midi) || 0) + 1);
   struck.set(midi, t);
-  const n = { midi, start: t, end: null, vel };
+  const n = { midi, start: t, end: null, vel, top };
   rollNotes.push(n);
   if (!open.has(midi)) open.set(midi, []);
   open.get(midi).push(n);
@@ -554,23 +554,25 @@ const autoOn = new Map();        // 自動再生で光っている midi -> 数
 let autoVoices = [];
 const toPerf = t => t - ac.currentTime + nowS();
 
-function playNote(midi, t, dur, vel) {
+function playNote(midi, t, dur, vel, top = false) {
+  if (top) vel = Math.min(1, vel * 1.45);          // トップノート（メロディ）を一段強く
   const v = voice(midi, t, vel); v.release(t + dur, 0.14);
   autoVoices.push(v);
-  pending.push({ t: toPerf(t), type: "on", midi, vel }, { t: toPerf(t + dur), type: "off", midi });
+  pending.push({ t: toPerf(t), type: "on", midi, vel, top }, { t: toPerf(t + dur), type: "off", midi });
 }
 function upDown(v) { return v.length < 3 ? v : v.concat(v.slice(1, -1).reverse()); }
 function scheduleChord(c, i, t) {
   const spb = 60 / bpm, dur = c.beats * spb;
   if (i != null) pending.push({ t: toPerf(t), type: "chord", idx: i });
   playNote(c.bass, t, dur - 0.04, 0.8);
+  const top = c.notes[c.notes.length - 1];
   if (pattern === "block" || i == null) {
-    c.notes.forEach(m => playNote(m, t, dur - 0.04, 0.72));
+    c.notes.forEach(m => playNote(m, t, dur - 0.04, 0.72, m === top));
   } else if (pattern === "stab") {
-    for (let b = 0; b < c.beats; b++) c.notes.forEach(m => playNote(m, t + b * spb, spb * 0.55, b % 2 ? 0.55 : 0.75));
+    for (let b = 0; b < c.beats; b++) c.notes.forEach(m => playNote(m, t + b * spb, spb * 0.55, b % 2 ? 0.55 : 0.75, m === top));
   } else {
     const ord = upDown(c.notes), steps = c.beats * 2;
-    for (let s = 0; s < steps; s++) playNote(ord[s % ord.length], t + s * spb / 2, spb / 2 * 1.7, s % 2 ? 0.55 : 0.72);
+    for (let s = 0; s < steps; s++) { const m = ord[s % ord.length]; playNote(m, t + s * spb / 2, spb / 2 * 1.7, s % 2 ? 0.55 : 0.72, m === top); }
   }
 }
 function tick() {
@@ -622,7 +624,7 @@ function processPending(now) {
   pending = rest;
   due.sort((a, b) => a.t - b.t || (a.type === "off" ? -1 : 1));
   for (const e of due) {
-    if (e.type === "on") { visOn(e.midi, e.vel, e.t); autoOn.set(e.midi, (autoOn.get(e.midi) || 0) + 1); }
+    if (e.type === "on") { visOn(e.midi, e.vel, e.t, e.top); autoOn.set(e.midi, (autoOn.get(e.midi) || 0) + 1); }
     else if (e.type === "off") {
       const n = autoOn.get(e.midi) || 0;
       if (n > 0) { visOff(e.midi, e.t); if (n === 1) autoOn.delete(e.midi); else autoOn.set(e.midi, n - 1); }
@@ -752,6 +754,7 @@ function renderEditor() {
     return;
   }
   const c = timeline[sel];
+  if (playing) editorEl.innerHTML = `<div class="hint">再生中の変更は、このマスが次に回ってきたときに鳴ります。止めているときは変更のたびにその場で試聴します。</div>`;
   const row = (label, node) => {
     const l = document.createElement("div"); l.className = "label"; l.textContent = label;
     editorEl.append(l, node);
@@ -818,7 +821,7 @@ function renderEditor() {
   row("トップノート（位置）", tw);
   row("トップノート（音）", chips(FIFTHS, pc => {
     const deg = (pc - keyPc + 12) % 12, ct = tones.includes(pc);
-    let m = topM - 6; while (pcOf(m) !== pc) m++;            // 今のトップに一番近い高さ
+    const m = 12 * (octOf(topM) + 1) + pc;                     // オクターブ番号はそのまま、音名だけ替える
     const b = chip(degName(deg), c.topDeg != null && pcOf(topM) === pc, () => setTop(m), "root" + (ct ? " ct" : " ten"));
     b.style.setProperty("--c", col(pc)); b.title = ct ? "構成音" : "テンションとして上に乗せる";
     return b;
@@ -1059,6 +1062,10 @@ function drawRoll(now) {
     rr(c, x1, y, Math.max(3, x2 - x1), h, Math.min(4, h / 2));
     c.fill();
     c.restore();
+    if (n.top) {   // トップノートは白い縁取りで目立たせる
+      c.strokeStyle = `rgba(255,255,255,${0.85 * a})`; c.lineWidth = 1.2;
+      rr(c, x1 + 0.6, y + 0.6, Math.max(2, x2 - x1 - 1.2), h - 1.2, Math.min(4, h / 2)); c.stroke();
+    }
     if (active) { c.fillStyle = "rgba(255,255,255,0.85)"; c.fillRect(x1, y, 2, h); }
   }
   // 鍵盤：白鍵
