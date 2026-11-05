@@ -194,6 +194,17 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outlin
 .chip[aria-pressed="true"] { background: var(--fg); color: #0b0d14; border-color: var(--fg); }
 .chip.root { border-color: color-mix(in srgb, var(--c) 55%, var(--line)); }
 .chip.root[aria-pressed="true"] { background: var(--c); border-color: var(--c); box-shadow: 0 0 10px color-mix(in srgb, var(--c) 55%, transparent); }
+.stack { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.nchip {
+  font-family: var(--f-mono); font-size: 12px; padding: 2px 7px; border-radius: 4px;
+  color: var(--c); border: 1px solid color-mix(in srgb, var(--c) 45%, var(--line)); background: var(--ink);
+}
+.nchip.is-bass { margin-right: 10px; }
+.nchip.is-bass, .nchip.is-top { background: var(--c); color: #0b0d14; font-weight: 500; box-shadow: 0 0 10px color-mix(in srgb, var(--c) 50%, transparent); }
+.stepper { display: inline-flex; align-items: center; gap: 2px; margin-right: 6px; }
+.stepper output { font-family: var(--f-mono); font-size: 13px; min-width: 4.5ch; text-align: center; font-variant-numeric: tabular-nums; }
+.chip:disabled { opacity: .35; cursor: not-allowed; }
+.chip.ten { border-style: dashed; opacity: .8; }
 .editor select {
   font: inherit; font-size: 12px; background: var(--ink); color: var(--fg);
   border: 1px solid var(--line); border-radius: 5px; padding: 4px 8px; max-width: 100%;
@@ -305,7 +316,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outlin
         </div>
 
         <div class="group">
-          <label class="label" for="progText">テキストで書く（例：<code>FM7 E7 Am7 Gm7:2 C7:2</code>　<code>:拍数</code> 省略時は4拍、<code>F/G</code> でオンコード）</label>
+          <label class="label" for="progText">テキストで書く（例：<code>FM7 E7 Am7 Gm7:2 C7:2</code>　<code>:拍数</code> 省略時は4拍、<code>F/G</code> でオンコード、<code>/A2</code> でベースの高さ、<code>^E5</code> でトップノート）</label>
           <div class="textin">
             <input id="progText" type="text" spellcheck="false" autocomplete="off">
             <button class="tool" id="applyText">反映</button>
@@ -411,16 +422,41 @@ function degName(deg) {
 function chordName(c) {
   return degName(c.deg) + c.q + (c.bass != null && c.bass !== c.deg ? "/" + degName(c.bass) : "");
 }
+/* トップノートを決めて、その下に和音の構成音を密集配置で積む。
+   トップが構成音でなければテンションとして一番上に乗せる */
+const chordPcs = (root, q) => [...new Set(Q[q].map(i => (root + i) % 12))];
+function voiceUnder(pcs, T) {
+  const rest = pcs.filter(pc => pc !== T % 12), v = [T];
+  for (let k = 0; k < rest.length; k++) {
+    let x = v[v.length - 1] - 1;
+    while (!rest.includes(pcOf(x)) || v.some(y => pcOf(y) === pcOf(x))) x--;
+    v.push(x);
+  }
+  return v.reverse();
+}
+/* トップ／ベースの高さはキーCに置き換えた高さで保存（移調しても±半オクターブ以内に収まる） */
+const keyShift = () => keyPc <= 6 ? keyPc : keyPc - 12;
+const topMidi = c => 12 * (c.topOct + 1) + c.topDeg + keyShift();
+function bassMidi(c) {
+  const deg = c.bass ?? c.deg;
+  if (c.bassOct == null) return 36 + (keyPc + deg) % 12;
+  let m = 12 * (c.bassOct + 1) + deg + keyShift();
+  while (m < LO) m += 12;
+  return m;
+}
+const noteLabel = m => nameOf(m) + (Math.floor(m / 12) - 1);
 function buildSeq(list) {
   let prev = null, out = [];
   for (let pass = 0; pass < 2; pass++) {
     out = list.map(c => {
       const root = (keyPc + c.deg) % 12;
       let best = null, bc = Infinity;
-      for (const v of voicings(root, Q[c.q])) { const k = cost(v, prev); if (k < bc) { bc = k; best = v; } }
+      if (c.topDeg != null) best = voiceUnder(chordPcs(root, c.q), topMidi(c));
+      else for (const v of voicings(root, Q[c.q])) { const k = cost(v, prev); if (k < bc) { bc = k; best = v; } }
       prev = best;
-      const bpc = (keyPc + (c.bass ?? c.deg)) % 12;
-      return { root, q: c.q, roman: romanOf(c), beats: c.beats, notes: best, bass: 36 + bpc, name: chordName(c) };
+      const bass = bassMidi(c);
+      return { root, q: c.q, roman: romanOf(c), beats: c.beats, notes: best, bass, name: chordName(c),
+               pcs: chordPcs(root, c.q) };
     });
   }
   return out;
@@ -740,6 +776,23 @@ function renderEditor() {
   }));
   row("種類", chips(QLIST, q => chip(qLabel(q), q === c.q, () => editSel({ q }))));
   row("拍数", chips([1, 2, 3, 4, 6, 8], n => chip(String(n), n === c.beats, () => editSel({ beats: n }))));
+  const sc = seq[sel], bassM = sc.bass, topM = sc.notes[sc.notes.length - 1];
+  const stack = document.createElement("div"); stack.className = "stack";
+  [bassM, ...sc.notes].forEach((m, i) => {
+    const n = document.createElement("span");
+    n.className = "nchip" + (i === 0 ? " is-bass" : i === sc.notes.length ? " is-top" : "");
+    n.style.setProperty("--c", col(pcOf(m))); n.textContent = noteLabel(m);
+    stack.appendChild(n);
+  });
+  row("構成音（低→高）", stack);
+  const stepper = (down, label, up, downOk, upOk, aria) => {
+    const w = document.createElement("span"); w.className = "stepper"; w.setAttribute("aria-label", aria);
+    const mk = (t, fn, ok, a) => { const b = document.createElement("button"); b.className = "chip"; b.textContent = t; b.disabled = !ok; b.setAttribute("aria-label", a); b.addEventListener("click", fn); return b; };
+    const v = document.createElement("output"); v.textContent = label;
+    w.append(mk("▼", down, downOk, aria + "を下げる"), v, mk("▲", up, upOk, aria + "を上げる"));
+    return w;
+  };
+  const octOf = m => Math.floor(m / 12) - 1;
   const s = document.createElement("select");
   s.id = "bassSel"; s.setAttribute("aria-label", "ベース音");
   s.innerHTML = `<option value="">根音のまま</option>` + FIFTHS.map(pc => {
@@ -747,7 +800,29 @@ function renderEditor() {
     return deg === c.deg ? "" : `<option value="${deg}"${c.bass === deg ? " selected" : ""}>/${degName(deg)}（${DEG[deg]}）</option>`;
   }).join("");
   s.addEventListener("change", () => editSel({ bass: s.value === "" ? null : +s.value }));
-  row("ベース（オンコード）", s);
+  const bw = document.createElement("div"); bw.className = "chips";
+  const bo = octOf(bassM - keyShift());
+  bw.append(s, stepper(() => editSel({ bassOct: bo - 1 }), noteLabel(bassM), () => editSel({ bassOct: bo + 1 }), bassM - 12 >= LO, bassM + 12 <= 64, "ベースのオクターブ"),
+    chip("自動", c.bassOct == null, () => editSel({ bassOct: null })));
+  row("ベース（音・オクターブ）", bw);
+
+  // トップノート
+  const setTop = m => { const r = m - keyShift(); editSel({ topDeg: pcOf(r), topOct: octOf(r) }); };
+  const tones = sc.pcs;
+  const stepTone = dir => { let m = topM + dir; while (!tones.includes(pcOf(m))) m += dir; return m; };
+  const dn = stepTone(-1), up = stepTone(1);
+  const tw = document.createElement("div"); tw.className = "chips";
+  tw.append(stepper(() => setTop(dn), noteLabel(topM), () => setTop(up), dn >= 55, up <= 84, "トップノート（構成音ずつ）"));
+  const ob = (t, d) => { const b = chip(t, false, () => setTop(topM + d)); b.disabled = topM + d < 55 || topM + d > 84; return b; };
+  tw.append(ob("1オクターブ↓", -12), ob("1オクターブ↑", 12), chip("自動", c.topDeg == null, () => editSel({ topDeg: null, topOct: null })));
+  row("トップノート（位置）", tw);
+  row("トップノート（音）", chips(FIFTHS, pc => {
+    const deg = (pc - keyPc + 12) % 12, ct = tones.includes(pc);
+    let m = topM - 6; while (pcOf(m) !== pc) m++;            // 今のトップに一番近い高さ
+    const b = chip(degName(deg), c.topDeg != null && pcOf(topM) === pc, () => setTop(m), "root" + (ct ? " ct" : " ten"));
+    b.style.setProperty("--c", col(pc)); b.title = ct ? "構成音" : "テンションとして上に乗せる";
+    return b;
+  }));
   const acts = document.createElement("div"); acts.className = "tools";
   const tool = (text, fn, dis, cls = "") => {
     const b = document.createElement("button"); b.className = "tool " + cls; b.textContent = text; b.disabled = dis;
@@ -788,7 +863,12 @@ function renderPalette() {
 const textEl = $("progText"), textMsg = $("textMsg");
 function syncText() {
   if (document.activeElement === textEl) return;
-  textEl.value = timeline.map(c => chordName(c) + (c.beats !== 4 ? ":" + c.beats : "")).join(" ");
+  textEl.value = timeline.map(c => {
+    const onb = c.bass != null && c.bass !== c.deg;
+    const bassPart = onb || c.bassOct != null ? "/" + degName(c.bass ?? c.deg) + (c.bassOct != null ? Math.floor(bassMidi(c) / 12) - 1 : "") : "";
+    const topPart = c.topDeg != null ? "^" + degName(c.topDeg) + (Math.floor(topMidi(c) / 12) - 1) : "";
+    return degName(c.deg) + c.q + bassPart + topPart + (c.beats !== 4 ? ":" + c.beats : "");
+  }).join(" ");
 }
 const LETTER = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const QALIAS = {
@@ -801,14 +881,18 @@ const pcFrom = (l, acc) => (LETTER[l.toUpperCase()] + (/[#♯]/.test(acc) ? 1 : 
 function parseText(s) {
   const toks = s.split(/[\s|,]+/).filter(Boolean), out = [];
   for (const t of toks) {
-    const m = t.match(/^([A-Ga-g])([#♯b♭]?)([^/:]*)(?:\/([A-Ga-g])([#♯b♭]?))?(?::(\d+))?$/);
+    const m = t.match(/^([A-Ga-g])([#♯b♭]?)([^/:^]*)(?:\/([A-Ga-g])([#♯b♭]?)([2-4])?)?(?:\^([A-Ga-g])([#♯b♭]?)([3-5]))?(?::(\d+))?$/);
     if (!m) throw new Error(`「${t}」を読めませんでした`);
     const q = QALIAS[m[3]] ?? QALIAS[m[3].replace("♭", "b")];
     if (q === undefined) throw new Error(`「${t}」の「${m[3]}」は未対応の種類です（使えるもの：${QLIST.filter(Boolean).join(" ")}）`);
     const deg = (pcFrom(m[1], m[2]) - keyPc + 12) % 12;
     const bass = m[4] ? (pcFrom(m[4], m[5]) - keyPc + 12) % 12 : null;
-    const beats = m[6] ? Math.max(1, Math.min(8, +m[6])) : 4;
-    out.push({ deg, q, beats, bass: bass === deg ? null : bass });
+    const beats = m[10] ? Math.max(1, Math.min(8, +m[10])) : 4;
+    const ch = { deg, q, beats, bass: bass === deg ? null : bass };
+    const rel = (l, a, o) => 12 * (+o + 1) + pcFrom(l, a) - keyShift();   // キーCに置き換えた高さ
+    if (m[6]) ch.bassOct = Math.floor(rel(m[4], m[5], m[6]) / 12) - 1;
+    if (m[7]) { const r = rel(m[7], m[8], m[9]); ch.topDeg = pcOf(r); ch.topOct = Math.floor(r / 12) - 1; }
+    out.push(ch);
   }
   return out;
 }
