@@ -1,0 +1,713 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>五度圏ピアノロール</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Shippori+Mincho+B1:wght@600;800&family=Zen+Kaku+Gothic+New:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 一画面の楽器。上に横長のピアノロール、下に「今鳴っている和音」カードと再生コントロール。暗い舞台で鳴った鍵だけが発光する単一テーマ。 */
+:root {
+  --ink: #090b11;        /* 舞台の背景 */
+  --panel: #10131c;      /* パネル */
+  --raise: #181c29;      /* 押せる面 */
+  --line: #262b3c;       /* 罫線 */
+  --fg: #e7e9f1;         /* 本文 */
+  --mute: #8a90a8;       /* 補足 */
+  --live: hsl(0 90% 62%);/* 今の和音の根音の色（JSで更新） */
+  --f-display: "Shippori Mincho B1", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --f-body: "Zen Kaku Gothic New", "Hiragino Sans", "Yu Gothic", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  color-scheme: dark;
+}
+html, body { background: var(--ink); color: var(--fg); }
+body { font-family: var(--f-body); font-size: 14px; line-height: 1.6; }
+.wrap {
+  max-width: 1240px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 36px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 8px 24px; }
+h1 {
+  font-family: var(--f-display); font-weight: 800; font-size: clamp(24px, 3.4vw, 34px);
+  letter-spacing: 0.04em; margin: 0; line-height: 1.2; text-wrap: balance;
+}
+.lede { margin: 4px 0 0; color: var(--mute); max-width: 62ch; }
+.legend { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.legend span {
+  font-family: var(--f-mono); font-size: 11px; width: 26px; text-align: center;
+  padding: 2px 0; border-radius: 3px; color: #0b0d14; font-weight: 500;
+}
+.legend-cap { font-size: 11px; color: var(--mute); letter-spacing: 0.08em; margin-right: 6px; }
+@media (max-width: 520px) { .legend-cap { display: none; } .legend span { width: 24px; } }
+
+.stage {
+  position: relative; height: clamp(320px, 56vh, 620px);
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel);
+}
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; cursor: pointer; }
+.stage-hint {
+  position: absolute; right: 12px; bottom: 10px; font-size: 11px; color: var(--mute);
+  pointer-events: none; font-family: var(--f-mono); letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 2px 8px; border-radius: 4px;
+}
+
+.deck { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 18px; }
+@media (max-width: 780px) { .deck { grid-template-columns: minmax(0, 1fr); } }
+
+.now {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 16px; display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.now canvas { width: 200px; height: 200px; max-width: 100%; }
+.chord-name {
+  font-family: var(--f-display); font-weight: 800; font-size: 40px; line-height: 1.1;
+  color: var(--live); text-shadow: 0 0 18px color-mix(in srgb, var(--live) 55%, transparent);
+  min-height: 44px; transition: color .15s, text-shadow .15s;
+}
+.chord-deg { font-family: var(--f-mono); color: var(--mute); font-size: 13px; min-height: 20px; }
+
+.controls { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.group { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.label { font-size: 11px; letter-spacing: 0.12em; color: var(--mute); }
+
+.progs { display: flex; flex-wrap: wrap; gap: 6px; }
+.prog {
+  font: inherit; font-size: 13px; color: var(--fg); background: var(--raise);
+  border: 1px solid var(--line); border-radius: 6px; padding: 6px 11px; cursor: pointer;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 0; line-height: 1.35;
+}
+.prog small { font-family: var(--f-mono); font-size: 10.5px; color: var(--mute); }
+.prog:hover { border-color: color-mix(in srgb, var(--fg) 30%, var(--line)); }
+.prog[aria-pressed="true"] { border-color: var(--fg); background: color-mix(in srgb, var(--fg) 8%, var(--raise)); }
+
+.strip { display: flex; flex-wrap: wrap; gap: 6px; }
+.cell {
+  min-width: 64px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line);
+  background: var(--panel); display: flex; flex-direction: column; gap: 0;
+  transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.cell b { font-family: var(--f-display); font-weight: 800; font-size: 17px; }
+.cell i { font-style: normal; font-family: var(--f-mono); font-size: 10.5px; color: var(--mute); }
+.cell.on {
+  border-color: var(--c); background: color-mix(in srgb, var(--c) 14%, var(--panel));
+  box-shadow: 0 0 14px color-mix(in srgb, var(--c) 45%, transparent);
+}
+
+.row { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: flex-end; }
+.play {
+  font: inherit; font-weight: 700; font-size: 15px; letter-spacing: 0.06em;
+  padding: 10px 22px; border-radius: 8px; cursor: pointer; color: #0b0d14;
+  background: var(--fg); border: 0; min-width: 120px;
+  transition: background .15s, box-shadow .15s;
+}
+.play[aria-pressed="true"] { background: var(--live); box-shadow: 0 0 22px color-mix(in srgb, var(--live) 60%, transparent); }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 13px; color: var(--mute); background: var(--panel); border: 0;
+  padding: 7px 12px; cursor: pointer; border-right: 1px solid var(--line);
+}
+.seg button:last-child { border-right: 0; }
+.seg button[aria-pressed="true"] { color: var(--fg); background: var(--raise); }
+.tempo { display: flex; align-items: center; gap: 10px; }
+.tempo input { width: 150px; accent-color: var(--fg); }
+.tempo output { font-family: var(--f-mono); font-variant-numeric: tabular-nums; min-width: 4.5ch; }
+.keys { display: flex; flex-wrap: wrap; gap: 4px; }
+.key {
+  font-family: var(--f-mono); font-size: 12px; width: 34px; padding: 5px 0; text-align: center;
+  border-radius: 5px; cursor: pointer; background: var(--panel); color: var(--fg);
+  border: 1px solid color-mix(in srgb, var(--c) 55%, var(--line));
+}
+.key[aria-pressed="true"] { background: var(--c); color: #0b0d14; box-shadow: 0 0 12px color-mix(in srgb, var(--c) 60%, transparent); font-weight: 500; }
+
+.foot { font-size: 12px; color: var(--mute); }
+.foot kbd {
+  font-family: var(--f-mono); font-size: 11px; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px; padding: 0 5px; color: var(--fg); background: var(--raise);
+}
+button:focus-visible, input:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div>
+      <h1>五度圏ピアノロール</h1>
+      <p class="lede">十二平均律の12音を、五度圏の順に色相環へ一周30°ずつ割り当てました。鳴っている鍵だけが自分の色で光ります。</p>
+    </div>
+    <div class="legend" id="legend" aria-label="五度圏の順の色"><span class="legend-cap">五度圏</span></div>
+  </header>
+
+  <section class="stage" aria-label="ピアノロール">
+    <canvas id="roll"></canvas>
+    <div class="stage-hint">鍵盤かロールの段をクリック／タップで発音</div>
+  </section>
+
+  <section class="deck">
+    <div class="now" aria-live="polite">
+      <canvas id="wheel" width="200" height="200" aria-label="鳴っている音の五度圏表示"></canvas>
+      <div class="chord-name" id="chordName">—</div>
+      <div class="chord-deg" id="chordDeg">進行を選んで再生</div>
+    </div>
+
+    <div class="controls">
+      <div class="group">
+        <div class="label">有名進行</div>
+        <div class="progs" id="progs"></div>
+      </div>
+      <div class="group">
+        <div class="label" id="stripLabel">進行</div>
+        <div class="strip" id="strip"></div>
+      </div>
+      <div class="row">
+        <button class="play" id="play" aria-pressed="false">▶ 再生</button>
+        <div class="group">
+          <div class="label">弾き方</div>
+          <div class="seg" id="pattern">
+            <button data-p="block" aria-pressed="true">白玉</button>
+            <button data-p="stab" aria-pressed="false">4分刻み</button>
+            <button data-p="arp" aria-pressed="false">アルペジオ</button>
+          </div>
+        </div>
+        <div class="group">
+          <label class="label" for="bpm">テンポ（BPM）</label>
+          <div class="tempo"><input type="range" id="bpm" min="50" max="180" value="96"><output id="bpmOut">96</output></div>
+        </div>
+      </div>
+      <div class="group">
+        <div class="label">キー（五度圏順）</div>
+        <div class="keys" id="keys"></div>
+      </div>
+    </div>
+  </section>
+
+  <p class="foot">
+    PCキーボードでも弾けます：<kbd>A</kbd><kbd>W</kbd><kbd>S</kbd><kbd>E</kbd><kbd>D</kbd><kbd>F</kbd><kbd>T</kbd><kbd>G</kbd><kbd>Y</kbd><kbd>H</kbd><kbd>U</kbd><kbd>J</kbd><kbd>K</kbd> = C〜C、
+    <kbd>Z</kbd>/<kbd>X</kbd> でオクターブ移動（現在 <span id="octLabel">C4</span>）、<kbd>Space</kbd> で再生／停止。
+  </p>
+</div>
+
+<script>
+(() => {
+"use strict";
+
+/* ---------- 音と色 ---------- */
+const LO = 36, HI = 84;                       // C2〜C6
+const SHARP = ["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
+const FLAT  = ["C","D♭","D","E♭","E","F","G♭","G","A♭","A","B♭","B"];
+const FLAT_KEYS = new Set([5, 10, 3, 8, 1, 6]);
+const BLACK = new Set([1, 3, 6, 8, 10]);
+const pcOf = m => ((m % 12) + 12) % 12;
+const fifthIdx = pc => (pc * 7) % 12;        // C=0, G=1, D=2 … F=11
+const hueOf = pc => fifthIdx(pc) * 30;       // 色相環を五度で一周
+const col = (pc, l = 62, a = 1) => `hsla(${hueOf(pc)}, 92%, ${l}%, ${a})`;
+const isBlack = m => BLACK.has(pcOf(m));
+const FIFTHS = [0,7,2,9,4,11,6,1,8,3,10,5];
+
+let keyPc = 0;
+const nameOf = pc => (FLAT_KEYS.has(keyPc) ? FLAT : SHARP)[pcOf(pc)];
+const midiName = m => SHARP[pcOf(m)].replace("♯", "#") + (Math.floor(m / 12) - 1);
+
+/* ---------- 進行データ: [キーからの半音, 種類, 度数表記, 拍数] ---------- */
+const Q = { "": [0,4,7], m: [0,3,7], "7": [0,4,7,10], M7: [0,4,7,11], m7: [0,3,7,10] };
+const PROGS = [
+  { id: "komuro", name: "小室進行", roman: "vi–IV–V–I",
+    chords: [[9,"m","VIm",4],[5,"","IV",4],[7,"","V",4],[0,"","I",4]] },
+  { id: "oudou", name: "王道進行", roman: "IV–V–iii–vi",
+    chords: [[5,"M7","IVM7",4],[7,"","V",4],[4,"m7","IIIm7",4],[9,"m","VIm",4]] },
+  { id: "canon", name: "カノン進行", roman: "I–V–vi–iii–IV–I–IV–V",
+    chords: [[0,"","I",2],[7,"","V",2],[9,"m","VIm",2],[4,"m","IIIm",2],[5,"","IV",2],[0,"","I",2],[5,"","IV",2],[7,"","V",2]] },
+  { id: "jttou", name: "Just the Two of Us進行", roman: "IVM7–III7–vi7–v7–I7",
+    chords: [[5,"M7","IVM7",4],[4,"7","III7",4],[9,"m7","VIm7",4],[7,"m7","Vm7",2],[0,"7","I7",2]] },
+  { id: "1625", name: "イチロクニーゴー", roman: "I–vi–ii–V",
+    chords: [[0,"M7","IM7",4],[9,"m7","VIm7",4],[2,"m7","IIm7",4],[7,"7","V7",4]] },
+  { id: "axis", name: "アクシス進行", roman: "I–V–vi–IV",
+    chords: [[0,"","I",4],[7,"","V",4],[9,"m","VIm",4],[5,"","IV",4]] },
+  { id: "251", name: "ツーファイブワン", roman: "ii7–V7–IM7",
+    chords: [[2,"m7","IIm7",4],[7,"7","V7",4],[0,"M7","IM7",8]] },
+  { id: "andalusia", name: "アンダルシア進行", roman: "vi–V–IV–III",
+    chords: [[9,"m","VIm",4],[7,"","V",4],[5,"","IV",4],[4,"","III",4]] },
+  { id: "blues", name: "12小節ブルース", roman: "I7–IV7–I7–V7…",
+    chords: [[0,"7","I7",4],[5,"7","IV7",4],[0,"7","I7",8],[5,"7","IV7",8],[0,"7","I7",8],[7,"7","V7",4],[5,"7","IV7",4],[0,"7","I7",4],[7,"7","V7",4]] },
+];
+
+/* ---------- ボイシング（声部の動きが最小になる転回を選ぶ） ---------- */
+function voicings(rootPc, ints) {
+  const pcs = ints.map(i => (rootPc + i) % 12), n = pcs.length, out = [];
+  for (let inv = 0; inv < n; inv++) {
+    const order = pcs.slice(inv).concat(pcs.slice(0, inv));
+    for (let base = 48; base <= 72; base++) {
+      if (base % 12 !== order[0]) continue;
+      const v = [base];
+      for (let k = 1; k < n; k++) { let x = v[k - 1] + 1; while (x % 12 !== order[k]) x++; v.push(x); }
+      if (v[0] >= 52 && v[n - 1] <= 79) out.push(v);
+    }
+  }
+  return out;
+}
+const avg = a => a.reduce((s, x) => s + x, 0) / a.length;
+function cost(v, prev) {
+  let c = 0.25 * Math.abs(avg(v) - 64);
+  if (!prev) return c;
+  if (prev.length === v.length) for (let i = 0; i < v.length; i++) c += Math.abs(v[i] - prev[i]);
+  else c += Math.abs(avg(v) - avg(prev)) * v.length + 1;
+  return c;
+}
+function buildSeq(prog) {
+  let prev = null, seq = [];
+  for (let pass = 0; pass < 2; pass++) {
+    seq = prog.chords.map(([deg, q, roman, beats]) => {
+      const root = (keyPc + deg) % 12;
+      let best = null, bc = Infinity;
+      for (const v of voicings(root, Q[q])) { const c = cost(v, prev); if (c < bc) { bc = c; best = v; } }
+      prev = best;
+      return { root, q, roman, beats, notes: best, bass: 36 + root, name: nameOf(root) + q };
+    });
+  }
+  return seq;
+}
+
+/* ---------- 音源（Web Audio） ---------- */
+let ac = null, bus = null;
+function ensureAudio() {
+  if (ac) { if (ac.state === "suspended") ac.resume(); return; }
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  const comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -16; comp.ratio.value = 4;
+  bus = ac.createGain(); bus.gain.value = 0.55;
+  const verb = ac.createConvolver(), wet = ac.createGain();
+  const len = Math.floor(ac.sampleRate * 2.6), ir = ac.createBuffer(2, len, ac.sampleRate);
+  for (let ch = 0; ch < 2; ch++) { const d = ir.getChannelData(ch); for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3.2); }
+  verb.buffer = ir; wet.gain.value = 0.22;
+  bus.connect(comp); bus.connect(verb); verb.connect(wet); wet.connect(comp); comp.connect(ac.destination);
+}
+function voice(midi, t, vel = 0.8) {
+  const f = 440 * Math.pow(2, (midi - 69) / 12);
+  const g = ac.createGain(), lp = ac.createBiquadFilter();
+  lp.type = "lowpass"; lp.frequency.value = Math.min(9000, f * 7); lp.Q.value = 0.6;
+  const o1 = ac.createOscillator(), o2 = ac.createOscillator(), g2 = ac.createGain();
+  o1.type = "triangle"; o1.frequency.value = f;
+  o2.type = "sine"; o2.frequency.value = f * 2; o2.detune.value = 4; g2.gain.value = 0.22;
+  o1.connect(lp); o2.connect(g2); g2.connect(lp); lp.connect(g); g.connect(bus);
+  const peak = 0.16 * vel * (midi < 48 ? 1.25 : 1);
+  g.gain.setValueAtTime(0, t);
+  g.gain.linearRampToValueAtTime(peak, t + 0.006);
+  g.gain.setTargetAtTime(peak * 0.45, t + 0.01, 0.5);
+  lp.frequency.setTargetAtTime(Math.min(9000, f * 3), t + 0.01, 0.4);
+  o1.start(t); o2.start(t);
+  let stopped = false;
+  return {
+    release(t2, tau = 0.12) {
+      if (stopped) return; stopped = true;
+      t2 = Math.max(t2, ac.currentTime);
+      if (g.gain.cancelAndHoldAtTime) g.gain.cancelAndHoldAtTime(t2); else g.gain.cancelScheduledValues(t2);
+      g.gain.setTargetAtTime(0, t2, tau);
+      o1.stop(t2 + tau * 8); o2.stop(t2 + tau * 8);
+      this.end = t2 + tau * 8;
+    },
+    end: Infinity,
+  };
+}
+
+/* ---------- 光る状態 ---------- */
+const nowS = () => performance.now() / 1000;
+const held = new Map();      // midi -> 押されている数
+const open = new Map();      // midi -> 終わっていないロールノート
+const struck = new Map();    // midi -> 打鍵時刻（フラッシュ用）
+let rollNotes = [];
+function visOn(midi, vel = 0.8, t = nowS()) {
+  held.set(midi, (held.get(midi) || 0) + 1);
+  struck.set(midi, t);
+  const n = { midi, start: t, end: null, vel };
+  rollNotes.push(n);
+  if (!open.has(midi)) open.set(midi, []);
+  open.get(midi).push(n);
+}
+function visOff(midi, t = nowS()) {
+  const c = (held.get(midi) || 0) - 1;
+  if (c <= 0) held.delete(midi); else held.set(midi, c);
+  const arr = open.get(midi);
+  if (arr && arr.length) arr.shift().end = t;
+}
+
+/* ---------- 手で弾く ---------- */
+const live = new Map(); // id -> {midi, v}
+function liveOn(id, midi) {
+  if (midi < LO || midi > HI) return;
+  ensureAudio();
+  liveOff(id);
+  live.set(id, { midi, v: voice(midi, ac.currentTime, 0.85) });
+  visOn(midi, 0.85);
+}
+function liveOff(id) {
+  const n = live.get(id); if (!n) return;
+  live.delete(id);
+  n.v.release(ac.currentTime, 0.18);
+  visOff(n.midi);
+}
+
+/* ---------- 自動再生スケジューラ ---------- */
+let prog = PROGS[0], seq = buildSeq(prog), pattern = "block", bpm = 96;
+let playing = false, timer = null, nextT = 0, idx = 0, beatOrigin = nowS();
+let pending = [];                // 視覚イベント {t, type, midi, idx}
+const autoOn = new Map();        // 自動再生で光っている midi -> 数
+let autoVoices = [];
+const toPerf = t => t - ac.currentTime + nowS();
+
+function playNote(midi, t, dur, vel) {
+  const v = voice(midi, t, vel); v.release(t + dur, 0.14);
+  autoVoices.push(v);
+  pending.push({ t: toPerf(t), type: "on", midi, vel }, { t: toPerf(t + dur), type: "off", midi });
+}
+function upDown(v) { return v.length < 3 ? v : v.concat(v.slice(1, -1).reverse()); }
+function scheduleChord(c, i, t) {
+  const spb = 60 / bpm, dur = c.beats * spb;
+  pending.push({ t: toPerf(t), type: "chord", idx: i });
+  playNote(c.bass, t, dur - 0.04, 0.8);
+  if (pattern === "block") {
+    c.notes.forEach(m => playNote(m, t, dur - 0.04, 0.72));
+  } else if (pattern === "stab") {
+    for (let b = 0; b < c.beats; b++) c.notes.forEach(m => playNote(m, t + b * spb, spb * 0.55, b % 2 ? 0.55 : 0.75));
+  } else {
+    const ord = upDown(c.notes), steps = c.beats * 2;
+    for (let s = 0; s < steps; s++) playNote(ord[s % ord.length], t + s * spb / 2, spb / 2 * 1.7, s % 2 ? 0.55 : 0.72);
+  }
+}
+function tick() {
+  const ahead = ac.currentTime + 0.15;
+  while (nextT < ahead) {
+    const c = seq[idx % seq.length];
+    scheduleChord(c, idx % seq.length, nextT);
+    nextT += c.beats * 60 / bpm;
+    idx++;
+  }
+  autoVoices = autoVoices.filter(v => v.end > ac.currentTime);
+}
+function start() {
+  ensureAudio();
+  playing = true; idx = 0;
+  nextT = ac.currentTime + 0.08;
+  beatOrigin = toPerf(nextT);
+  tick(); timer = setInterval(tick, 25);
+  playBtn.setAttribute("aria-pressed", "true"); playBtn.textContent = "■ 停止";
+}
+function stop() {
+  playing = false; clearInterval(timer); timer = null;
+  autoVoices.forEach(v => v.release(ac.currentTime, 0.05)); autoVoices = [];
+  pending = [];
+  for (const [m, n] of autoOn) for (let k = 0; k < n; k++) visOff(m);
+  autoOn.clear();
+  setCurrent(-1);
+  playBtn.setAttribute("aria-pressed", "false"); playBtn.textContent = "▶ 再生";
+}
+function processPending(now) {
+  if (!pending.length) return;
+  const due = [], rest = [];
+  for (const e of pending) (e.t <= now ? due : rest).push(e);
+  pending = rest;
+  due.sort((a, b) => a.t - b.t || (a.type === "off" ? -1 : 1));
+  for (const e of due) {
+    if (e.type === "on") { visOn(e.midi, e.vel, e.t); autoOn.set(e.midi, (autoOn.get(e.midi) || 0) + 1); }
+    else if (e.type === "off") {
+      const n = autoOn.get(e.midi) || 0;
+      if (n > 0) { visOff(e.midi, e.t); if (n === 1) autoOn.delete(e.midi); else autoOn.set(e.midi, n - 1); }
+    } else setCurrent(e.idx);
+  }
+}
+
+/* ---------- UI ---------- */
+const $ = id => document.getElementById(id);
+const playBtn = $("play"), progsEl = $("progs"), stripEl = $("strip"), keysEl = $("keys");
+const chordName = $("chordName"), chordDeg = $("chordDeg");
+
+FIFTHS.forEach(pc => {
+  const s = document.createElement("span");
+  s.textContent = SHARP[pc].replace("♯", "#"); s.style.background = col(pc);
+  $("legend").appendChild(s);
+});
+
+PROGS.forEach(p => {
+  const b = document.createElement("button");
+  b.className = "prog"; b.id = "prog-" + p.id;
+  b.innerHTML = `<span>${p.name}</span><small>${p.roman}</small>`;
+  b.setAttribute("aria-pressed", String(p === prog));
+  b.addEventListener("click", () => {
+    prog = p;
+    progsEl.querySelectorAll(".prog").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    rebuild();
+    if (playing) { stop(); start(); }
+  });
+  progsEl.appendChild(b);
+});
+
+FIFTHS.forEach(pc => {
+  const b = document.createElement("button");
+  b.className = "key"; b.id = "key-" + pc;
+  b.textContent = FLAT_KEYS.has(pc) ? FLAT[pc] : SHARP[pc];
+  b.style.setProperty("--c", col(pc));
+  b.setAttribute("aria-pressed", String(pc === keyPc));
+  b.setAttribute("aria-label", "キー " + b.textContent);
+  b.addEventListener("click", () => {
+    keyPc = pc;
+    keysEl.querySelectorAll(".key").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+    rebuild();
+  });
+  keysEl.appendChild(b);
+});
+
+$("pattern").addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  pattern = b.dataset.p;
+  $("pattern").querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", String(x === b)));
+});
+$("bpm").addEventListener("input", e => { bpm = +e.target.value; $("bpmOut").textContent = bpm; });
+playBtn.addEventListener("click", () => playing ? stop() : start());
+
+let curIdx = -1;
+function rebuild() {
+  seq = buildSeq(prog);
+  $("stripLabel").textContent = `${prog.name}（キー ${nameOf(keyPc)}）`;
+  stripEl.innerHTML = "";
+  seq.forEach((c, i) => {
+    const d = document.createElement("div");
+    d.className = "cell"; d.style.setProperty("--c", col(c.root));
+    d.innerHTML = `<b style="color:${col(c.root, 70)}">${c.name}</b><i>${c.roman} · ${c.beats}拍</i>`;
+    stripEl.appendChild(d);
+  });
+  setCurrent(playing ? curIdx : -1);
+}
+function setCurrent(i) {
+  curIdx = i;
+  [...stripEl.children].forEach((el, k) => el.classList.toggle("on", k === i));
+  if (i < 0 || !seq[i]) {
+    chordName.textContent = "—";
+    chordDeg.textContent = playing ? "" : "進行を選んで再生";
+    return;
+  }
+  const c = seq[i];
+  chordName.textContent = c.name;
+  chordDeg.textContent = `${c.roman}  ·  ${c.notes.map(m => nameOf(m)).join(" ")}`;
+  document.documentElement.style.setProperty("--live", col(c.root));
+}
+
+/* ---------- PCキーボード ---------- */
+const KMAP = { KeyA:0, KeyW:1, KeyS:2, KeyE:3, KeyD:4, KeyF:5, KeyT:6, KeyG:7, KeyY:8, KeyH:9, KeyU:10, KeyJ:11, KeyK:12, KeyO:13, KeyL:14, KeyP:15, Semicolon:16 };
+let octBase = 60;
+const octLabel = () => { $("octLabel").textContent = midiName(octBase); };
+window.addEventListener("keydown", e => {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.repeat) return;
+  const tag = e.target.tagName;
+  if (e.code === "Space") {
+    if (tag === "BUTTON" || tag === "INPUT") return;
+    e.preventDefault(); playing ? stop() : start(); return;
+  }
+  if (e.code === "KeyZ") { octBase = Math.max(LO, octBase - 12); octLabel(); return; }
+  if (e.code === "KeyX") { octBase = Math.min(HI - 12, octBase + 12); octLabel(); return; }
+  if (e.code in KMAP) { e.preventDefault(); liveOn("k" + e.code, octBase + KMAP[e.code]); }
+});
+window.addEventListener("keyup", e => { if (e.code in KMAP) liveOff("k" + e.code); });
+window.addEventListener("blur", () => { for (const id of [...live.keys()]) liveOff(id); });
+
+/* ---------- ピアノロール描画 ---------- */
+const roll = $("roll"), rx = roll.getContext("2d");
+let W = 0, H = 0, KW = 80, BW = 50, rowH = 10, speed = 80, dpr = 1;
+function resize() {
+  const r = roll.getBoundingClientRect();
+  dpr = Math.min(2, window.devicePixelRatio || 1);
+  W = r.width; H = r.height;
+  roll.width = Math.round(W * dpr); roll.height = Math.round(H * dpr);
+  KW = Math.max(58, Math.min(108, W * 0.1));
+  BW = KW * 0.6;
+  rowH = H / (HI - LO + 1);
+  speed = (W - KW) / 11;   // 約11秒分の履歴を表示
+}
+new ResizeObserver(resize).observe(roll);
+resize();
+
+const yOf = m => (HI - m) * rowH;
+function whiteSpan(m) {
+  let top = isBlack(m + 1) && m + 1 <= HI ? yOf(m + 1) + rowH / 2 : yOf(m);
+  let bot = isBlack(m - 1) && m - 1 >= LO ? yOf(m - 1) + rowH / 2 : yOf(m) + rowH;
+  return [Math.max(0, top), Math.min(H, bot)];
+}
+function hit(x, y) {
+  let m = HI - Math.floor(y / rowH);
+  m = Math.max(LO, Math.min(HI, m));
+  if (x >= KW || !isBlack(m) || x < BW) return m;
+  const frac = (y - yOf(m)) / rowH;
+  return frac < 0.5 ? m + 1 : m - 1;
+}
+function rr(ctx, x, y, w, h, r) {
+  r = Math.min(r, w / 2, h / 2);
+  ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+
+function drawRoll(now) {
+  const c = rx;
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, W, H);
+  // 段
+  for (let m = LO; m <= HI; m++) {
+    c.fillStyle = isBlack(m) ? "#0c0f17" : "#12151f";
+    c.fillRect(KW, yOf(m), W - KW, rowH);
+    if (pcOf(m) === 0) { c.fillStyle = "#2a3043"; c.fillRect(KW, yOf(m) + rowH - 1, W - KW, 1); }
+    else if (pcOf(m) === 5) { c.fillStyle = "#1b2030"; c.fillRect(KW, yOf(m) + rowH - 1, W - KW, 1); }
+  }
+  // 拍線
+  const spb = 60 / bpm, past = (W - KW) / speed;
+  let k = Math.floor((now - beatOrigin) / spb);
+  for (; ; k--) {
+    const t = beatOrigin + k * spb, x = KW + (now - t) * speed;
+    if (x > W) break;
+    if (x < KW) continue;
+    c.fillStyle = ((k % 4) + 4) % 4 === 0 ? "rgba(140,150,190,0.16)" : "rgba(140,150,190,0.06)";
+    c.fillRect(Math.round(x), 0, 1, H);
+  }
+  // 鳴っている段の余光
+  for (const m of held.keys()) {
+    const g = c.createLinearGradient(KW, 0, KW + 220, 0);
+    g.addColorStop(0, col(pcOf(m), 60, 0.32)); g.addColorStop(1, col(pcOf(m), 60, 0));
+    c.fillStyle = g; c.fillRect(KW, yOf(m), 220, rowH);
+  }
+  // ノート
+  rollNotes = rollNotes.filter(n => n.end === null || KW + (now - n.end) * speed < W + 4);
+  for (const n of rollNotes) {
+    if (n.start > now) continue;
+    const pc = pcOf(n.midi), active = n.end === null;
+    const x1 = KW + (now - (active ? now : n.end)) * speed;
+    const x2 = Math.min(W + 10, KW + (now - n.start) * speed);
+    const age = active ? 0 : (now - n.end) / past;
+    const a = Math.max(0.2, 1 - age * 0.8);
+    const y = yOf(n.midi) + 1, h = Math.max(2, rowH - 2);
+    c.save();
+    c.shadowColor = col(pc, 60, active ? 0.95 : 0.6 * a);
+    c.shadowBlur = active ? 18 : 10 * a;
+    c.fillStyle = col(pc, active ? 66 : 58, a * (0.55 + 0.45 * n.vel));
+    rr(c, x1, y, Math.max(3, x2 - x1), h, Math.min(4, h / 2));
+    c.fill();
+    c.restore();
+    if (active) { c.fillStyle = "rgba(255,255,255,0.85)"; c.fillRect(x1, y, 2, h); }
+  }
+  // 鍵盤：白鍵
+  c.fillStyle = "#07090e"; c.fillRect(0, 0, KW, H);
+  for (let m = LO; m <= HI; m++) {
+    if (isBlack(m)) continue;
+    const [t, b] = whiteSpan(m), on = held.has(m), pc = pcOf(m);
+    c.save();
+    if (on) {
+      const fl = Math.max(0, 1 - (now - (struck.get(m) || 0)) / 0.35);
+      c.shadowColor = col(pc, 60, 1); c.shadowBlur = 22 + 18 * fl;
+      c.fillStyle = col(pc, 64 + 14 * fl);
+    } else c.fillStyle = "#dfe2ec";
+    rr(c, 0, t + 0.5, KW - 1, b - t - 1, 2.5); c.fill();
+    c.restore();
+    if (pc === 0 && rowH > 6) {
+      c.fillStyle = on ? "rgba(10,12,18,0.85)" : "#6a7088";
+      c.font = `500 ${Math.min(11, rowH * 0.95)}px "IBM Plex Mono", monospace`;
+      c.textAlign = "right"; c.textBaseline = "middle";
+      c.fillText(midiName(m), KW - 5, yOf(m) + rowH / 2);
+    }
+  }
+  // 鍵盤：黒鍵
+  for (let m = LO; m <= HI; m++) {
+    if (!isBlack(m)) continue;
+    const on = held.has(m), pc = pcOf(m);
+    c.save();
+    if (on) {
+      const fl = Math.max(0, 1 - (now - (struck.get(m) || 0)) / 0.35);
+      c.shadowColor = col(pc, 60, 1); c.shadowBlur = 20 + 18 * fl;
+      c.fillStyle = col(pc, 56 + 14 * fl);
+    } else c.fillStyle = "#151925";
+    rr(c, 0, yOf(m) + 0.5, BW, rowH - 1, 2); c.fill();
+    c.restore();
+  }
+  // 現在線
+  c.fillStyle = "rgba(230,233,241,0.35)"; c.fillRect(KW, 0, 1, H);
+}
+
+/* ---------- 五度圏ホイール ---------- */
+const wheel = $("wheel"), wx = wheel.getContext("2d");
+wheel.width = 400; wheel.height = 400;
+function drawWheel(now) {
+  const c = wx; c.setTransform(2, 0, 0, 2, 0, 0); c.clearRect(0, 0, 200, 200);
+  const cx = 100, cy = 100, R = 74;
+  const pos = pc => { const a = (fifthIdx(pc) * 30 - 90) * Math.PI / 180; return [cx + R * Math.cos(a), cy + R * Math.sin(a)]; };
+  // 外周リング（色相環）
+  for (let i = 0; i < 12; i++) {
+    c.beginPath(); c.strokeStyle = col(FIFTHS[i], 55, 0.22); c.lineWidth = 3;
+    const a0 = (i * 30 - 105) * Math.PI / 180, a1 = (i * 30 - 75) * Math.PI / 180;
+    c.arc(cx, cy, R + 18, a0, a1); c.stroke();
+  }
+  const pcs = [...new Set([...held.keys()].map(pcOf))].sort((a, b) => fifthIdx(a) - fifthIdx(b));
+  if (pcs.length > 1) {
+    c.save(); c.beginPath();
+    pcs.forEach((pc, i) => { const [x, y] = pos(pc); i ? c.lineTo(x, y) : c.moveTo(x, y); });
+    if (pcs.length > 2) c.closePath();
+    c.strokeStyle = "rgba(236,238,248,0.7)"; c.lineWidth = 1.5;
+    c.shadowColor = "rgba(236,238,248,0.8)"; c.shadowBlur = 10;
+    c.fillStyle = "rgba(236,238,248,0.06)"; c.fill(); c.stroke(); c.restore();
+  }
+  for (const pc of FIFTHS) {
+    const [x, y] = pos(pc), on = pcs.includes(pc);
+    c.save(); c.beginPath(); c.arc(x, y, on ? 14 : 12, 0, Math.PI * 2);
+    if (on) { c.shadowColor = col(pc, 60, 1); c.shadowBlur = 20; c.fillStyle = col(pc, 64); c.fill(); }
+    else { c.fillStyle = "#10131c"; c.fill(); c.strokeStyle = col(pc, 60, 0.55); c.lineWidth = 1.5; c.stroke(); }
+    c.restore();
+    c.fillStyle = on ? "#0b0d14" : col(pc, 72, 0.9);
+    c.font = `500 ${on ? 11 : 10}px "IBM Plex Mono", monospace`;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText(nameOf(pc), x, y + 0.5);
+  }
+}
+
+/* ---------- 起動時の見本（直前に小室進行を弾いた跡） ---------- */
+function seedDemo() {
+  const s = buildSeq(PROGS[0]), spb = 60 / 96;
+  const total = s.reduce((a, c) => a + c.beats * spb, 0);
+  let t = nowS() - 0.5 - total;
+  beatOrigin = t;
+  for (const c of s) {
+    const d = c.beats * spb - 0.04;
+    [c.bass, ...c.notes].forEach(m => rollNotes.push({ midi: m, start: t, end: t + d, vel: 0.75 }));
+    t += c.beats * spb;
+  }
+}
+
+/* ---------- ポインタ ---------- */
+roll.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  roll.setPointerCapture(e.pointerId);
+  const r = roll.getBoundingClientRect();
+  liveOn("p" + e.pointerId, hit(e.clientX - r.left, e.clientY - r.top));
+});
+roll.addEventListener("pointermove", e => {
+  const n = live.get("p" + e.pointerId); if (!n) return;
+  const r = roll.getBoundingClientRect();
+  const m = hit(e.clientX - r.left, e.clientY - r.top);
+  if (m !== n.midi) liveOn("p" + e.pointerId, m);
+});
+["pointerup", "pointercancel", "lostpointercapture"].forEach(t => roll.addEventListener(t, e => liveOff("p" + e.pointerId)));
+
+/* ---------- ループ ---------- */
+function frame() {
+  const now = nowS();
+  processPending(now);
+  drawRoll(now);
+  drawWheel(now);
+  requestAnimationFrame(frame);
+}
+rebuild();
+seedDemo();
+octLabel();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
