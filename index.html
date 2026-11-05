@@ -380,12 +380,14 @@ const Q = {
 const QLIST = ["", "m", "7", "M7", "m7", "6", "m6", "sus4", "7sus4", "add9", "9", "dim", "m7♭5", "dim7", "aug", "mM7"];
 const qLabel = q => q === "" ? "メジャー" : q;
 const DEG = ["I","♭II","II","♭III","III","IV","♯IV","V","♭VI","VI","♭VII","VII"];
-const romanOf = c => DEG[c.deg] + c.q + (c.bass != null && c.bass !== c.deg ? "/" + DEG[c.bass] : "");
-function degName(deg) {          // ♭系の度数（借用和音）はフラット、♯IV はシャープで綴る
-  const pc = (keyPc + deg) % 12, d = DEG[deg];
+/* sp:"flat" のときは ♯IV を ♭V と書く（裏コードの ♭V7 など） */
+const degLabel = (deg, sp) => deg === 6 && sp === "flat" ? "♭V" : DEG[deg];
+const romanOf = c => degLabel(c.deg, c.sp) + c.q + (c.bass != null && c.bass !== c.deg ? "/" + DEG[c.bass] : "");
+function degName(deg, sp) {      // ♭系の度数（借用和音）はフラット、♯IV はシャープで綴る
+  const pc = (keyPc + deg) % 12, d = degLabel(deg, sp);
   return d[0] === "♭" ? FLAT[pc] : d[0] === "♯" ? SHARP[pc] : nameOf(pc);
 }
-const chordName = c => degName(c.deg) + c.q + (c.bass != null && c.bass !== c.deg ? "/" + degName(c.bass) : "");
+const chordName = c => degName(c.deg, c.sp) + c.q + (c.bass != null && c.bass !== c.deg ? "/" + degName(c.bass) : "");
 const chordPcs = (root, q) => [...new Set(Q[q].map(i => (root + i) % 12))];
 
 /* テンプレート: [キーからの半音, 種類, 拍数] */
@@ -402,8 +404,30 @@ const PROGS = [
   { id: "andalusia", name: "アンダルシア進行", roman: "VIm–V–IV–III", chords: [[9,"m",4],[7,"",4],[5,"",4],[4,"",4]] },
   { id: "blues", name: "12小節ブルース", roman: "I7–IV7–I7–V7…",
     chords: [[0,"7",4],[5,"7",4],[0,"7",8],[5,"7",8],[0,"7",8],[7,"7",4],[5,"7",4],[0,"7",4],[7,"7",4]] },
+  /* 槇原敬之「もう恋なんてしない」原曲キーE・BPM105。和音はU-フレットのコード譜から。拍数は推定。
+     [度数, 種類, 拍数, オンコードのベース度数, 綴り] */
+  { id: "mokoi-pre", name: "もう恋なんてしない サビ前", roman: "IVM7–III7–VIm7–VIm/V…", key: 4, bpm: 105,
+    chords: MOKOI_PRE() },
+  { id: "mokoi-chorus", name: "もう恋なんてしない サビ", roman: "IVM7–III7–VIm7–♯IVm7♭5…", key: 4, bpm: 105,
+    chords: MOKOI_CHORUS() },
+  { id: "mokoi-both", name: "もう恋なんてしない サビ前→サビ", roman: "サビ前8小節＋サビ4小節", key: 4, bpm: 105,
+    chords: [...MOKOI_PRE(), ...MOKOI_CHORUS()] },
 ];
-const fromTpl = p => p.chords.map(([deg, q, beats]) => ({ deg, q, beats, bass: null }));
+function MOKOI_PRE() {
+  return [
+    [5,"M7",2],[4,"7",2],[9,"m7",2],[9,"m",2,7],          // AM7 G♯7 C♯m7 C♯m/B
+    [2,"m7",2],[2,"m7",2,7],[6,"7",4,null,"flat"],         // F♯m7 F♯m7/B B♭7
+    [5,"M7",2],[7,"",2,5],[4,"m7",2],[9,"m7",2],           // AM7 B/A G♯m7 C♯m7
+    [2,"m7",2],[7,"7",2],[0,"",2],[0,"7",2],               // F♯m7 B7 E E7
+  ];
+}
+function MOKOI_CHORUS() {
+  return [
+    [5,"M7",2],[4,"7",2],[9,"m7",2],[6,"m7♭5",2],          // AM7 G♯7 C♯m7 A♯m7♭5
+    [2,"m7",2],[2,"m7",2,7],[0,"sus4",2],[0,"",2],         // F♯m7 F♯m7/B Esus4 E
+  ];
+}
+const fromTpl = p => p.chords.map(([deg, q, beats, bass = null, sp]) => ({ deg, q, beats, bass, ...(sp ? { sp } : {}) }));
 
 const DIA3 = [[0,""],[2,"m"],[4,"m"],[5,""],[7,""],[9,"m"],[11,"dim"]];
 const DIA4 = [[0,"M7"],[2,"m7"],[4,"m7"],[5,"M7"],[7,"7"],[9,"m7"],[11,"m7♭5"]];
@@ -458,11 +482,12 @@ function genBass(list) {
   return list.map(c => ({ m: 36 + (c.bass ?? c.deg), d: c.beats }));
 }
 function genTop(list) {
-  let prev = 76, out = [];
+  const ks = keyShift();                 // 実際に鳴る高さが E4〜G5 あたりに収まるように
+  let prev = 74 - ks, out = [];
   for (const c of list) {
     const pcs = chordPcs(c.deg, c.q);
     let best = prev, bd = Infinity;
-    for (let m = 67; m <= 81; m++) if (pcs.includes(pcOf(m))) { const d = Math.abs(m - prev) - (m > prev ? 0.1 : 0); if (d < bd) { bd = d; best = m; } }
+    for (let m = 64 - ks; m <= 79 - ks; m++) if (pcs.includes(pcOf(m))) { const d = Math.abs(m - prev) - (m > prev ? 0.1 : 0); if (d < bd) { bd = d; best = m; } }
     out.push({ m: best, d: c.beats });
     prev = best;
   }
@@ -755,6 +780,8 @@ PROGS.forEach(p => {
   b.innerHTML = `<span>${p.name}</span><small>${p.roman}</small>`;
   b.addEventListener("click", () => {
     mutate(() => {
+      if (p.key != null) keyPc = p.key;
+      if (p.bpm) { bpm = p.bpm; $("bpm").value = bpm; $("bpmOut").textContent = bpm; }
       timeline = fromTpl(p);
       tracks = { top: genTop(timeline), bass: genBass(timeline) };
       sel = { kind: "chord", i: 0 };
@@ -1028,7 +1055,9 @@ function parseChords(s) {
     if (q === undefined) throw new Error(`「${t}」の「${m[3]}」は未対応の種類です（使えるもの：${QLIST.filter(Boolean).join(" ")}）`);
     const deg = (pcFrom(m[1], m[2]) - keyPc + 12) % 12;
     const bass = m[4] ? (pcFrom(m[4], m[5]) - keyPc + 12) % 12 : null;
-    return { deg, q, beats: m[6] ? Math.max(1, Math.min(8, +m[6])) : 4, bass: bass === deg ? null : bass };
+    const ch = { deg, q, beats: m[6] ? Math.max(1, Math.min(8, +m[6])) : 4, bass: bass === deg ? null : bass };
+    if (deg === 6 && /[b♭]/.test(m[2])) ch.sp = "flat";
+    return ch;
   });
 }
 function parseMelody(s, k) {
